@@ -146,7 +146,7 @@ def download_one_asset(
 
             tmp_file = output_file.with_suffix(output_file.suffix + ".part")
             with tmp_file.open("wb") as f:
-                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                for chunk in resp.iter_content(chunk_size = 2 * 1024 * 1024):
                     if chunk:
                         f.write(chunk)
             tmp_file.replace(output_file)
@@ -290,21 +290,70 @@ def main() -> int:
     session = build_purchase_session(bearer=bearer, cookie=cookie)
 
     failed_log_path = (root / args.failed_log).resolve()
+    existing_failed_by_id: Dict[int, Dict] = {}
+    deferred_failed_ids: set[int] = set()
+    recovered_deferred_ids: set[int] = set()
+
+    if not args.retry_failed and failed_log_path.exists():
+        try:
+            existing_failed_items = load_retry_targets(failed_log_path)
+            for old_item in existing_failed_items:
+                old_id_raw = old_item.get("packageId")
+                try:
+                    old_id = int(old_id_raw)
+                except Exception:
+                    continue
+                existing_failed_by_id[old_id] = old_item
+            deferred_failed_ids = set(existing_failed_by_id.keys())
+            if deferred_failed_ids:
+                print(
+                    f"[INFO] 检测到历史失败项 {len(deferred_failed_ids)} 个，"
+                    "本次将排到下载队列末尾。"
+                )
+        except Exception as exc:
+            print(f"[WARN] 读取历史失败清单失败，已忽略: {exc}")
+
     if args.retry_failed:
         print(f"[INFO] 仅重试失败项: {failed_log_path}")
         purchases = load_retry_targets(failed_log_path)
         print(f"[INFO] 加载失败项完成，共 {len(purchases)} 条。")
     else:
         print("[INFO] 开始拉取已购买资产列表...")
-        purchases = fetch_all_purchases(
-            session=session,
-            purchase_api=purchase_api,
-            limit=limit,
-            order_by=order_by,
-            order=order,
-            timeout=timeout,
-        )
-        print(f"[INFO] 列表拉取完成，共 {len(purchases)} 条。")
+        try:
+            purchases = fetch_all_purchases(
+                session=session,
+                purchase_api=purchase_api,
+                limit=limit,
+                order_by=order_by,
+                order=order,
+                timeout=timeout,
+            )
+            print(f"[INFO] 列表拉取完成，共 {len(purchases)} 条。")
+        except Exception as exc:
+            print(f"[WARN] 拉取已购列表失败: {exc}")
+            if purchases_export_path.exists():
+                try:
+                    purchases = json.loads(
+                        purchases_export_path.read_text(encoding="utf-8")
+                    )
+                    if not isinstance(purchases, list):
+                        raise ValueError("快照不是列表格式")
+                    print(
+                        "[WARN] 已回退使用本地快照列表继续下载: "
+                        f"{purchases_export_path} (共 {len(purchases)} 条)"
+                    )
+                except Exception as load_exc:
+                    print(
+                        "[ERROR] 已购列表拉取失败，且本地快照不可用: "
+                        f"{purchases_export_path}, 错误: {load_exc}"
+                    )
+                    return 1
+            else:
+                print(
+                    "[ERROR] 已购列表拉取失败，且本地快照不存在: "
+                    f"{purchases_export_path}"
+                )
+                return 1
 
     purchases_export_path.write_text(
         json.dumps(purchases, ensure_ascii=False, indent=2),
@@ -334,7 +383,7 @@ def main() -> int:
             continue
 
         if package_id_int >= 20000000:
-            print(f"【CN特供资源】{package_id_int} {display_name}")
+            print(f"[SKIP] 跳过【CN特供资源】 {package_id_int} {display_name}")
             skipped += 1
             continue
 
@@ -344,6 +393,8 @@ def main() -> int:
         if output_file.exists():
             print(f"[SKIP] 已存在，跳过: {filename}")
             skipped += 1
+            if package_id_int in deferred_failed_ids:
+                recovered_deferred_ids.add(package_id_int)
             continue
 
         to_download.append(
@@ -354,7 +405,17 @@ def main() -> int:
                 "displayName": display_name,
                 "filename": filename,
                 "outputFile": output_file,
+                "isDeferredFailed": package_id_int in deferred_failed_ids,
             }
+        )
+
+    if deferred_failed_ids:
+        normal_tasks = [t for t in to_download if not t["isDeferredFailed"]]
+        deferred_tasks = [t for t in to_download if t["isDeferredFailed"]]
+        to_download = normal_tasks + deferred_tasks
+        print(
+            f"[INFO] 已将历史失败项延后: 普通任务 {len(normal_tasks)} 个，"
+            f"历史失败任务 {len(deferred_tasks)} 个。"
         )
 
     print(
@@ -390,12 +451,16 @@ def main() -> int:
             status = result.get("status")
             if status == "ok":
                 downloaded += 1
+                if task.get("isDeferredFailed"):
+                    recovered_deferred_ids.add(task["packageId"])
                 print(
                     f"[OK] ({task['index']}/{task['total']}) "
                     f"[{task['packageId']}] {task['displayName']} -> {task['filename']}"
                 )
             elif status == "skipped":
                 skipped += 1
+                if task.get("isDeferredFailed"):
+                    recovered_deferred_ids.add(task["packageId"])
                 print(
                     f"[SKIP] ({task['index']}/{task['total']}) "
                     f"已存在，跳过: [{task['packageId']}] {task['filename']}"
@@ -422,11 +487,23 @@ def main() -> int:
         if not interrupted:
             executor.shutdown(wait=True)
 
+    merged_failed_by_id: Dict[int, Dict] = {}
+    for old_id, old_item in existing_failed_by_id.items():
+        if old_id not in recovered_deferred_ids:
+            merged_failed_by_id[old_id] = old_item
+    for item in failed_items:
+        try:
+            new_id = int(item.get("packageId"))
+        except Exception:
+            continue
+        merged_failed_by_id[new_id] = item
+
+    merged_failed_items = list(merged_failed_by_id.values())
     failed_log_path.write_text(
-        json.dumps(failed_items, ensure_ascii=False, indent=2),
+        json.dumps(merged_failed_items, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    if failed_items:
+    if merged_failed_items:
         print(f"[INFO] 失败清单已写入: {failed_log_path}")
     else:
         print(f"[INFO] 本次无失败项，已清空失败清单: {failed_log_path}")
