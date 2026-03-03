@@ -8,6 +8,6 @@
   "order_by": "name",
   "order": "asc",
   "request_timeout_sec": 90,
-  "max_workers": 3,
+  "max_workers": 5,
   "purchases_export_file": "purchases_snapshot.json"
 }
