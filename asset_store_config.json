@@ -1,0 +1,13 @@
+{
+  "bearer_token": "",
+  "cookie_file": "cookie.txt",
+  "purchase_api": "https://packages-v2.unity.cn/-/api/purchases",
+  "download_api_template": "https://assetstore.unity.com/api/downloads/{package_id}",
+  "download_dir": "D:\\UnityAssets",
+  "limit": 100,
+  "order_by": "name",
+  "order": "asc",
+  "request_timeout_sec": 90,
+  "max_workers": 3,
+  "purchases_export_file": "purchases_snapshot.json"
+}
