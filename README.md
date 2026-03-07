@@ -2,7 +2,7 @@
 
 用于批量下载 Unity Asset Store 已购买素材。
 
-该脚本支持多线程下载、失败重试、跳过已下载素材等功能。官网的下载速度较慢且不支持这些功能。
+该脚本支持并发下载、失败重试、跳过已下载素材等功能。官网的下载速度较慢且不支持这些功能。
 
 由于Unity剥夺了用户下载已购买Unity Asset Store素材后续更新的资格（[link](https://cdn.mc-weblink.sg-mktg.com/weblink/MTc3MjQ4OTA1M3xVQ3ZvRVZfYWh5Qy1mRDdKaWwxbDZRdHkwakVwQjBxWWlwRmg4UTM4TFVTZkZMVEEtc0c1SHpDVUZIYWMwU2JkSXpVM3JsVkJMdUxQc2hweFdWdUx2NlpFd2hXMHhxQlJjcV9pZ1ZIRmVQMk9nMzJ4RWh5UGR4YmM4V0xCUXh6NE83Nk9kU295RmJIaGtDMHhOSy1RTDhmbnJzZGhpazFJN05iamhIWGI0LVM5c2FuLU1ON2pIaktDSDJRRnRaZXJYTE5VRW1GZ2k4TDhWVzZUZmh1VzFvb25CaEdybF9Pd0syMGhFZWpRU0FLQVNEMThfeEU4aTQyNml3ZWhmeXYtNDlQZjhoSG9KenVhblhlempXQWNLZllTYlJiVUJhM19LdXlvdmV2N3BLTWlPM1JMaU1OZVJuSHFSbnhQVlN4OEh2c19HY29pV2tMTzJkZkNRRHpCeXc5TU4xenR8dHt9pYcYAlLUknobT8dFwOCP-77SFrEsKGvy1PlLsuQ=)），建议受影响的用户放下使用学习版素材的心理负担——问就是之前买了，但现在没法证明了。
 
@@ -13,8 +13,8 @@
 
 配置文件 `asset_store_config.json`:
 
-* bearer_token: 通过打开Unity编辑器的Package Manager抓包获取。
+* bearer_token: 通过打开Unity编辑器的Package Manager抓包获取。（可使用Fiddler Classic等抓包工具获取；用于导出已购买素材列表。一旦导出过，后续下载就可以不依赖此字段）
 * download_dir: 下载目录。如果你已经下载了一些，可以先放到这个目录中，脚本会自动跳过。
 * max_workers: 下载并发数。
-* purchases_export_file: 导出一份已购买素材列表，方便你回忆自己被Unity坑了多少钱。
+* purchases_export_file: 导出一份已购买素材列表（purchases_snapshot.json），方便你回忆自己被Unity坑了多少钱。
 * purchase_api: 根据你的区域，这个API地址可能不同，请在获取`bearer_token`时留意。
