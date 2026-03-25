@@ -126,6 +126,41 @@ def resolve_download_response(
     return first_response
 
 
+def detect_unexpected_download_response(
+    response: requests.Response,
+    first_chunk: bytes,
+) -> Optional[str]:
+    cookie_hint = "请检查并更新 cookie.txt（可能已过期或无效）"
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    text_like_content_type_hints = (
+        "text/",
+        "application/json",
+        "application/xml",
+        "application/xhtml+xml",
+        "application/javascript",
+    )
+    if any(hint in content_type for hint in text_like_content_type_hints):
+        return (
+            f"返回了文本内容 (Content-Type={content_type or 'unknown'})，"
+            f"{cookie_hint}"
+        )
+
+    if not first_chunk:
+        content_length = (response.headers.get("Content-Length") or "").strip()
+        if content_length == "0":
+            return "响应体为空，未返回 unitypackage 数据"
+        return None
+
+    probe_text = first_chunk[:4096].decode("utf-8", errors="ignore").strip().lower()
+    if probe_text:
+        if probe_text.startswith("<!doctype html") or probe_text.startswith("<html"):
+            return f"响应体看起来是 HTML 页面，{cookie_hint}"
+        if "<html" in probe_text[:512] and "</html>" in probe_text:
+            return f"响应体看起来是 HTML 页面，{cookie_hint}"
+
+    return None
+
+
 def download_one_asset(
     session: requests.Session,
     download_api_template: str,
@@ -136,17 +171,31 @@ def download_one_asset(
 ) -> None:
     url = download_api_template.format(package_id=package_id)
     last_err: Optional[Exception] = None
+    probe_chunk_size = 16 * 1024
+    download_chunk_size = 2 * 1024 * 1024
 
     for attempt in range(1, retries + 1):
+        resp: Optional[requests.Response] = None
         try:
             resp = session.get(url, stream=True, timeout=timeout)
             resp.raise_for_status()
             resp = resolve_download_response(session, resp, timeout)
             resp.raise_for_status()
 
+            resp.raw.decode_content = True
+            first_chunk = resp.raw.read(probe_chunk_size) or b""
+
+            unexpected_reason = detect_unexpected_download_response(resp, first_chunk)
+            if unexpected_reason:
+                raise RuntimeError(
+                    f"下载接口返回异常内容: packageId={package_id}, {unexpected_reason}"
+                )
+
             tmp_file = output_file.with_suffix(output_file.suffix + ".part")
             with tmp_file.open("wb") as f:
-                for chunk in resp.iter_content(chunk_size = 2 * 1024 * 1024):
+                if first_chunk:
+                    f.write(first_chunk)
+                for chunk in resp.iter_content(chunk_size=download_chunk_size):
                     if chunk:
                         f.write(chunk)
             tmp_file.replace(output_file)
@@ -162,6 +211,9 @@ def download_one_asset(
                 time.sleep(wait_sec)
             else:
                 break
+        finally:
+            if resp is not None:
+                resp.close()
 
     raise RuntimeError(f"下载失败 packageId={package_id}: {last_err}")
 
